@@ -53,3 +53,28 @@ musicdownloader/
 ├── requirements.txt
 └── README.md
 
+```
+
+🧩 Roadmap
+[x] Export playlist track names
+[ ] Support multiple playlists
+[ ] Add CLI arguments
+[ ] Track metadata (album, duration, release year)
+[ ] Music downloading (future phase)
+[ ] Cross-platform support
+
+---
+
+🤝 Contributing
+Contributions are welcome!
+
+If you have ideas, suggestions, or improvements, feel free to open an issue
+
+or submit a pull request.
+
+---
+
+⚠️ Disclaimer
+This project is intended for educational and personal use only.
+
+Downloading copyrighted content may violate Spotify’s terms of service.
