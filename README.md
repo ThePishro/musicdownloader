@@ -53,18 +53,15 @@ musicdownloader/
 ├── requirements.txt
 └── README.md
 
-```
-
 🧩 Roadmap
+
 [x] Export playlist track names
 [ ] Support multiple playlists
 [ ] Add CLI arguments
 [ ] Track metadata (album, duration, release year)
 [ ] Music downloading (future phase)
 [ ] Cross-platform support
-
----
-
+```
 🤝 Contributing
 Contributions are welcome!
 
