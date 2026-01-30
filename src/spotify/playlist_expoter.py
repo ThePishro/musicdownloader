@@ -1,46 +1,52 @@
 import os
-import time
-from typing import Optional
-
+from dotenv import load_dotenv
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials
 
 
 class SpotifyPlaylistExporter:
     def __init__(self):
-        self.sp = spotipy.Spotify(
-            auth_manager=SpotifyOAuth(
-                scope="playlist-read-private playlist-read-collaborative",
-                cache_path=".spotify_cache"
+        """
+        Initialize Spotify client using credentials from .env file
+        """
+
+        # Load environment variables from .env
+        load_dotenv()
+
+        client_id = os.getenv("SPOTIPY_CLIENT_ID")
+        client_secret = os.getenv("SPOTIPY_CLIENT_SECRET")
+
+        if not client_id or not client_secret:
+            raise RuntimeError(
+                "Spotify credentials not found. "
+                "Please set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET in .env file."
+            )
+
+        self.spotify = spotipy.Spotify(
+            auth_manager=SpotifyClientCredentials(
+                client_id=client_id,
+                client_secret=client_secret
             )
         )
 
-    def export_playlist(
-        self,
-        playlist_url: str,
-        output_path: str,
-        limit: int = 100,
-        sleep_time: float = 0.2
-    ):
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    def export_playlist(self, playlist_url: str, output_file_path: str):
+        """
+        Export all tracks from a Spotify playlist into a text file.
+        Format: Artist - Track Title
+        """
 
+        limit = 100
         offset = 0
-        total_tracks: Optional[int] = None
-        exported = 0
 
-        with open(output_path, "w", encoding="utf-8") as file:
+        with open(output_file_path, "w", encoding="utf-8") as file:
             while True:
-                results = self.sp.playlist_items(
+                response = self.spotify.playlist_items(
                     playlist_url,
                     limit=limit,
                     offset=offset
                 )
 
-                if total_tracks is None:
-                    total_tracks = results["total"]
-                    print(f"\nTotal tracks: {total_tracks}")
-
-                items = results["items"]
+                items = response.get("items", [])
                 if not items:
                     break
 
@@ -50,15 +56,10 @@ class SpotifyPlaylistExporter:
                         continue
 
                     artists = ", ".join(
-                        artist["name"] for artist in track["artists"]
+                        artist["name"] for artist in track.get("artists", [])
                     )
-                    title = track["name"]
+                    track_name = track.get("name")
 
-                    file.write(f"{artists} - {title}\n")
-                    exported += 1
+                    file.write(f"{artists} - {track_name}\n")
 
                 offset += limit
-                print(f"Exported {exported}/{total_tracks}", end="\r")
-                time.sleep(sleep_time)
-
-        print("\nPlaylist exported successfully.")
