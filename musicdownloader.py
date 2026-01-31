@@ -39,9 +39,6 @@ def export_playlist_flow():
         output_file_path=output_file_path
     )
 
-    print(f"✅ Playlist exported to: {output_file_path}")
-
-
 def main():
     while True:
         show_menu()
