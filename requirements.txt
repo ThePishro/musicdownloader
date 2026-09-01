@@ -1,4 +1,7 @@
+curl_cffi
+rich
+bs4
+dotenv
 spotipy
-python-dotenv
-tqdm
 halo
+tqdm
