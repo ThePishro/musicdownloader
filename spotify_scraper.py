@@ -1,8 +1,37 @@
+import base64
+import hashlib
+import hmac
 import json
 import re
+import struct
+import time
 from typing import Dict, List
+
 from bs4 import BeautifulSoup
 import requests
+
+
+# Spotify's Web Player currently uses a TOTP challenge for anonymous session
+# tokens. This is the same mechanism used by current no-login Web Player
+# clients such as SpotiFLAC.
+SPOTIFY_TOTP_SECRET = (
+    "GM3TMMJTGYZTQNZVGM4DINJZHA4TGOBYGMZTCMRTGEYDSMJRHE4TEOBUG4YTCMRUGQ4DQOJUGQYTAMRRGA2TCMJSHE3TCMBY"
+)
+SPOTIFY_TOTP_VERSION = 61
+
+
+def _generate_spotify_totp(timestamp: int | None = None) -> str:
+    """Generate Spotify Web Player's current anonymous-session TOTP."""
+    if timestamp is None:
+        timestamp = int(time.time())
+
+    secret = base64.b32decode(SPOTIFY_TOTP_SECRET + "=" * ((8 - len(SPOTIFY_TOTP_SECRET) % 8) % 8))
+    counter = int(timestamp // 30)
+    message = struct.pack(">Q", counter)
+    digest = hmac.new(secret, message, hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    code = struct.unpack(">I", digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return f"{code % 1_000_000:06d}"
 
 
 class SpotifyScraper:
@@ -12,7 +41,7 @@ class SpotifyScraper:
         self.headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                " (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                " (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
             ),
             "Accept-Language": "en-US,en;q=0.9",
         }
@@ -112,22 +141,38 @@ class SpotifyScraper:
         return []
 
     def search_tracks(self, query: str, max_results: int = 10) -> List[Dict]:
-        """Searches Spotify using their public web player guest token mechanism."""
+        """Search Spotify without a Spotify login using the current Web Player token flow."""
         try:
-            # Step 1: Get a temporary guest access token from Spotify's web player endpoint
+            # Spotify retired the old /get_access_token?reason=transport endpoint.
+            # Current anonymous Web Player clients obtain the token from /api/token
+            # using a TOTP challenge.
+            token_url = "https://open.spotify.com/api/token"
+            token_params = {
+                "reason": "init",
+                "productType": "web-player",
+                "totp": _generate_spotify_totp(),
+                "totpVer": str(SPOTIFY_TOTP_VERSION),
+                "totpServer": _generate_spotify_totp(),
+            }
+
             token_res = requests.get(
-                "https://open.spotify.com/get_access_token?reason=transport&productType=web_player",
-                headers=self.headers,
+                token_url,
+                params=token_params,
+                headers={
+                    **self.headers,
+                    "Content-Type": "application/json;charset=UTF-8",
+                },
                 timeout=10,
             )
             token_res.raise_for_status()
-            access_token = token_res.json().get("accessToken")
+            token_data = token_res.json()
+            access_token = token_data.get("accessToken")
 
             if not access_token:
                 print("⚠️ Could not acquire Spotify guest access token.")
                 return []
 
-            # Step 2: Query Spotify's official Web API search endpoint using the guest token
+            # The anonymous token is then used exactly as before for catalog search.
             search_url = "https://api.spotify.com/v1/search"
             params = {"q": query, "type": "track", "limit": max_results}
             api_headers = {
