@@ -1,3 +1,8 @@
+from src.cli_flows import (
+    download_from_url_flow,
+    export_playlist_flow,
+    search_and_download_flow,
+)
 import os
 import sys
 
@@ -5,14 +10,12 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.cli_flows import export_playlist_flow, search_and_download_flow
-
 
 def main():
     while True:
         print("\n=== MusicDownloader ===")
-        print("1) Search & Download Tracks (Spotify Metadata)")
-        print("2) Option 2 (placeholder)")
+        print("1) Search & Download Tracks (From Youtube With Spotify Metadata)")
+        print("2) Download from Spotify URL (Track or Playlist)")
         print("3) Export Spotify Playlist")
         print("0) Exit")
 
@@ -21,7 +24,7 @@ def main():
         if choice == "1":
             search_and_download_flow()
         elif choice == "2":
-            print("\nOption 2 is not implemented yet.")
+            download_from_url_flow()
         elif choice == "3":
             export_playlist_flow()
         elif choice == "0":

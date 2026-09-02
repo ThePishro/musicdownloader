@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from bs4 import BeautifulSoup
 import requests
@@ -9,7 +9,17 @@ from spotify_pathfinder import SpotifyPathfinder
 
 
 class SpotifyScraper:
-    """Extract Spotify metadata and perform login-free Web Player searches."""
+    """Extract Spotify metadata and perform login-free Web Player searches.
+
+    Everything here is anonymous / no-credentials-required by design:
+    - Track & playlist metadata comes from the public embed pages.
+    - Search comes from the internal Web Player Pathfinder API.
+
+    Deliberately does NOT use the authenticated Spotify Web API
+    (spotipy / Client Credentials): that path fails on Spotify-owned
+    editorial playlists (e.g. "Today's Top Hits") and isn't needed anyway,
+    since Pathfinder already returns everything we need anonymously.
+    """
 
     def __init__(self):
         self.headers = {
@@ -42,62 +52,116 @@ class SpotifyScraper:
             raise ValueError("Invalid Spotify track or playlist URL.")
         return match.group(1), match.group(2)
 
+    def _backfill_album_via_pathfinder(
+        self, track_id: str, artist: str, title: str
+    ) -> Optional[str]:
+        """Recover album name for a track using the anonymous Pathfinder
+        search API, since the embed page never exposes album data
+        (confirmed absent on multiple real album tracks).
+
+        Matches on exact spotify_id first; falls back to the top search
+        result if no exact ID match is found (title/artist can differ
+        slightly in formatting between the two endpoints).
+        """
+        try:
+            results = self._pathfinder.search(f"{artist} - {title}", limit=5)
+        except Exception:
+            return None
+
+        if not results:
+            return None
+
+        for result in results:
+            if result.get("spotify_id") == track_id:
+                return result.get("album")
+
+        # No exact ID match — best-effort fallback to the top hit.
+        return results[0].get("album")
+
     def get_track_metadata(self, track_id: str) -> Dict:
-        """Extract metadata for a single track."""
+        """Extract metadata for a single track from the embed page, with
+        album name backfilled via an anonymous Pathfinder search since the
+        embed endpoint doesn't expose it.
+        """
         data = self._get_embed_json("track", track_id)
         entity = data["props"]["pageProps"]["state"]["data"]["entity"]
 
-        title = entity.get("name", "Unknown Title")
+        title = entity.get("title") or entity.get("name", "Unknown Title")
+
         artists_data = entity.get("artists", [])
-        artists = (
+        artist = (
             ", ".join(a["name"] for a in artists_data if "name" in a)
             if artists_data else "Unknown Artist"
         )
 
-        album = "Unknown Album"
-        if isinstance(entity.get("album"), dict):
-            album = entity["album"].get("name", "Unknown Album")
-        elif isinstance(entity.get("albumOfTrack"), dict):
-            album = entity["albumOfTrack"].get("name", "Unknown Album")
+        year = None
+        release_date = entity.get("releaseDate")
+        if isinstance(release_date, dict) and release_date.get("isoString"):
+            year = release_date["isoString"][:4]
 
+        # Confirmed field path: entity.visualIdentity.image (list of
+        # {url, maxHeight, maxWidth}) — NOT album.images or
+        # visuals.avatarImage, which don't exist on current embed responses.
         cover_url = ""
-        images = []
-        if isinstance(entity.get("album"), dict):
-            images = entity["album"].get("images", [])
-        elif isinstance(entity.get("visuals"), dict):
-            avatar = entity["visuals"].get("avatarImage", {})
-            sources = avatar.get("sources", [])
-            if sources:
-                cover_url = sources[0].get("url", "")
-        if not cover_url and images:
-            cover_url = images[0].get("url", "")
+        images = entity.get("visualIdentity", {}).get("image", [])
+        if images:
+            largest = max(images, key=lambda img: img.get("maxWidth", 0))
+            cover_url = largest.get("url", "")
+
+        album = self._backfill_album_via_pathfinder(track_id, artist, title)
+        if not album:
+            album = "Unknown Album"
 
         return {
             "id": track_id,
             "type": "track",
             "title": title,
-            "artist": artists,
+            "artist": artist,
             "album": album,
+            "year": year,
             "cover_url": cover_url,
-            "search_query": f"{artists} - {title} Audio",
+            "search_query": f"{artist} - {title} Audio",
         }
 
-    def get_playlist_tracks(self, playlist_id: str) -> List[Dict]:
-        """Extract metadata for all tracks inside a public playlist."""
+    def get_playlist_data(self, playlist_id: str) -> tuple[str, List[Dict]]:
+        """Fetch the playlist's own name (from the embed page — confirmed
+        correct there) together with its FULL track list, fetched via the
+        paginated Pathfinder fetchPlaylistContents API.
+
+        The embed page's own trackList caps out at 100 tracks with no
+        pagination support at all (confirmed on a real 5000+ track
+        playlist), so it's only used for the playlist name/metadata here —
+        Pathfinder is the actual track source, and also gives us album,
+        album artist, track/disc number, and year for every track, which
+        the embed page doesn't expose even for its first 100.
+        """
         data = self._get_embed_json("playlist", playlist_id)
         entity = data["props"]["pageProps"]["state"]["data"]["entity"]
-        tracks = []
-        for item in entity.get("trackList", []):
-            title = item.get("title", "Unknown Title")
-            artist = item.get("subtitle", "Unknown Artist")
-            tracks.append({
-                "type": "track",
-                "title": title,
-                "artist": artist,
-                "album": "Spotify Playlist",
-                "cover_url": item.get("displayImage", ""),
-                "search_query": f"{artist} - {title} Audio",
-            })
+
+        playlist_name = (
+            entity.get("name")
+            or entity.get("title")
+            or "Unknown Playlist"
+        )
+
+        tracks, total_count = self._pathfinder.get_playlist_tracks(playlist_id)
+
+        if total_count and len(tracks) != total_count:
+            print(
+                f"⚠️ Expected {total_count} tracks but got {len(tracks)} —"
+                " some items may have been skipped (unavailable/local files)."
+            )
+
+        return playlist_name, tracks
+
+    def get_playlist_tracks(self, playlist_id: str) -> List[Dict]:
+        """Extract metadata for all tracks inside a public playlist.
+
+        Kept for backward compatibility (used by parse_url / process_url,
+        which only need the track list). Use get_playlist_data directly
+        when you also need the playlist's name.
+        """
+        _, tracks = self.get_playlist_data(playlist_id)
         return tracks
 
     def parse_url(self, spotify_url: str) -> List[Dict]:
