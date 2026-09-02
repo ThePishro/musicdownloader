@@ -1,7 +1,8 @@
 curl_cffi
+beautifulsoup4
+python-dotenv
+yt-dlp
+mutagen
 rich
-bs4
-dotenv
-spotipy
 halo
 tqdm
