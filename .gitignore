@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 playlists/
 downloads/
-.cache  
+.cache
+exported_playlists/
